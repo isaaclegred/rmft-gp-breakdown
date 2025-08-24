@@ -1,0 +1,126 @@
+#!/bin/bash
+
+### a quick script to record workflow
+### Reed Essick (reed.essick@gmail.com)
+
+#-------------------------------------------------
+
+. config.sh
+
+#-------------------------------------------------
+
+# draw samples from conditioned GPs
+
+#-------------------------------------------------
+
+for RMF in $RMFS
+do
+
+    OUTDIR="$BASEDIR/$RMF"
+
+    for MAXPC2 in $MAXPC2S
+    do
+
+        TAG="${RMF}_maxpc2-$MAXPC2"
+
+        for COMP in $COMPS
+        do
+
+            FTAG="${TAG}_${COMP}_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+            NEWPROC="$OUTDIR/$FTAG/gpr_fix_marginal_${FTAG}.hdf5"
+
+            #-----------------------------
+
+            ### draw from resulting GP
+
+#            echo \
+            draw-gpr \
+                -v \
+                -n $NUM_EOS \
+                --plot \
+                --output-dir $OUTDIR/$FTAG \
+                --tag $FTAG \
+                $NEWPROC \
+            || exit 1
+
+            #-----------------------------
+
+            ### integrate the samples
+
+            MANIFEST="${OUTDIR}/$FTAG/manifest-${FTAG}.csv"
+            echo $EOS_COLUMN > $MANIFEST
+
+            reference=""
+            for eos in "${OUTDIR}/${EFT}.csv" "${OUTDIR}/${EFT}_minimum.csv" "${OUTDIR}/${EFT}_maximum.csv"
+            do
+                name=$(echo $eos | awk -F '/' '{print $2}' | awk -F '.csv' '{print $1}')
+                reference="$reference -s $name $eos --samples-alpha $name 0.50 --samples-color $name b"
+            done
+
+            reference="$reference -s crust $CRUST --samples-alpha crust 0.50 --samples-color crust r"
+
+            samples=""    # used to record options for plotting later
+            macsamples=""
+
+            for i in $(seq 0 $(($NUM_EOS-1)))
+#            for i in 
+            do
+
+                I=$(python -c "print('%06d'%$i)")
+                M=$(python -c "print('%06d'%($i//1000))")
+                phipath="${OUTDIR}/${FTAG}/DRAWmod1000-$M/draw-gpr_${FTAG}-${I}.csv"
+                outpath="${OUTDIR}/${FTAG}/DRAWmod1000-$M/eos-draw-${I}.csv"
+                macpath="${OUTDIR}/${FTAG}/DRAWmod1000-$M/macro-draw-${I}.csv"
+
+#                echo \
+                integrate-phi \
+                    -v \
+                    -o $outpath \
+                    --sigma-logpressurec2 0.0 \
+                    --stitch-below-reference-pressure \
+                    --crust $CRUST \
+                    --include-cs2c2 \
+                    $phipath $REFERENCE_PRESSUREC2 \
+                || exit 1
+
+                sample="-s $I $outpath --samples-alpha $I $SAMPLE_ALPHA --samples-color $I k"
+
+                samples="$samples $sample"
+                macsamples="$macsamples -s $I $macpath --samples-alpha $I $SAMPLE_ALPHA --samples-color $I k"
+
+                echo $i >> $MANIFEST ### add this EoS realization to manifest
+
+            done
+
+            #-----------------------------
+
+            # integrate the TOV equations
+
+#            echo \
+            process2tov \
+                $MANIFEST \
+                "1e12" "1e17" \
+                --extend-up \
+                --pressurec2-column "pressurec2" \
+                --energy_densityc2-column "energy_densityc2" \
+                --baryon_density-column "baryon_density" \
+                --cs2c2-column "cs2c2" \
+                --central-eos-column "pressurec2" \
+                --central-eos-column "energy_densityc2" \
+                --central-eos-column "baryon_density" \
+                --central-eos-column "cs2c2" \
+                --formalism "logenthalpy" \
+                --min-num-models "10" \
+                --interpolator-rtol "1e-2" \
+                --integration-rtol "1e-4" \
+                --eos-column $EOS_COLUMN \
+                --eos-dir ${OUTDIR}/${FTAG} \
+                --eos-num-per-dir "1000" \
+                --eos-basename "eos-draw-%(draw)06d.csv" \
+                --macro-basename "macro-draw-%(draw)06d.csv" \
+                --Verbose \
+            || exit 1
+
+        done
+    done
+done

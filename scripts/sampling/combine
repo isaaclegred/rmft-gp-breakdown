@@ -1,0 +1,83 @@
+#!/bin/bash
+
+### combine priors conditioned with separate compositions and maximum-pressurec2
+### Reed Essick (reed.essick@gmail.com)
+
+#-------------------------------------------------
+
+. config.sh
+
+#-------------------------------------------------
+
+for RMF in $RMFS
+do
+
+    OUTDIR="$BASEDIR/$RMF"
+
+    for MAXPC2 in $MAXPC2S
+    do
+
+        TAG="${RMF}_maxpc2-$MAXPC2"
+
+        MRGTAG="${TAG}_mrgagn_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+
+        MRGDIR="${OUTDIR}/${MRGTAG}"
+
+        # assemble arguments for input processes and link sample sets
+        COMPARGS=""
+        IND="0"
+
+        for COMP in $COMPS
+        do
+
+            # set up arguments
+
+            FTAG="${TAG}_${COMP}_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+            COMPARGS="$COMPARGS --weight-and-inpath 1.0 ${OUTDIR}/${FTAG}/gpr_fix_marginal_${FTAG}.hdf5"
+
+            #---
+
+            # link files
+
+            echo "processing : $FTAG"
+
+            NEWDIR="$MRGDIR/DRAWmod1000-00000${IND}"
+            mkdir -p $NEWDIR
+            pushd $NEWDIR
+
+            OLDDIR="../../../${RMF}/${FTAG}/DRAWmod1000-000000"
+
+            IIND=$(($IND * 1000))
+            for CND in $(seq 0 999)
+            do
+
+                MND=$(python -c "print('%06d' % $(($IIND + $CND)))")
+                CND=$(python -c "print('%06d' % $CND)")
+
+                echo -en "\r    draw : $CND --> $MND"
+
+#                echo \
+                ln -s ${OLDDIR}/eos-draw-${CND}.csv eos-draw-${MND}.csv
+
+#                echo \
+                ln -s ${OLDDIR}/macro-draw-${CND}.csv macro-draw-${MND}.csv
+
+            done
+
+            popd
+            IND=$(($IND + 1))
+
+        done
+
+        # combine processes for this MAXPC2
+
+#        echo \
+        add-process \
+            "$MRGDIR/add-process_${MRGTAG}.hdf5" \
+            $COMPARGS \
+            --verbose \
+        || exit 1
+
+    done
+
+done

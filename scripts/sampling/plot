@@ -1,0 +1,214 @@
+#!/bin/bash
+
+### a quick script to record workflow
+### Reed Essick (reed.essick@gmail.com)
+
+#-------------------------------------------------
+
+. config.sh
+
+#-------------------------------------------------
+
+# draw samples from conditioned GPs
+
+#-------------------------------------------------
+
+for RMF in $RMFS
+do
+
+    OUTDIR="$BASEDIR/$RMF"
+
+    for MAXPC2 in $MAXPC2S
+    do
+
+        TAG="${RMF}_maxpc2-$MAXPC2"
+
+        for COMP in $COMPS
+        do
+
+            FTAG="${TAG}_${COMP}_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+            MANIFEST="${OUTDIR}/$FTAG/manifest-${FTAG}.csv"
+
+            reference="-s crust $CRUST --samples-alpha crust 0.50 --samples-color crust r"
+
+            original=""
+            for i in $(seq 0 $(($NUM_REFERENCE_SAMPLES - 1)))
+            do
+                I=$(python -c "print('%06d'%$i)")
+                outpath="../RMFEoS/unpacked-${RMF}/eos-draw-${I}.csv"
+
+                if test -f $outpath
+                then
+                    original="$original -s original-$I $outpath --samples-alpha original-$I $SAMPLE_ALPHA --samples-color original-$I b"
+                fi
+            done
+
+            samples=""    # used to record options for plotting later
+            macsamples=""
+
+            echo "setting up commands by iterating over EoS"
+
+            for i in $(seq 0 $(($NUM_EOS_SAMPLES-1)))
+            do
+
+                I=$(python -c "print('%06d'%$i)")
+                M=$(python -c "print('%06d'%($i//1000))")
+                outpath="${OUTDIR}/${FTAG}/DRAWmod1000-$M/eos-draw-${I}.csv"
+                macpath="${OUTDIR}/${FTAG}/DRAWmod1000-$M/macro-draw-${I}.csv"
+
+                sample="-s $I $outpath --samples-alpha $I $SAMPLE_ALPHA --samples-color $I k"
+                samples="$samples $sample"
+                macsamples="$macsamples -s $I $macpath --samples-alpha $I $SAMPLE_ALPHA --samples-color $I k"
+
+                # plot this realization individually
+
+#                echo \
+#                plot-eos \
+#                    energy_densityc2 pressurec2 \
+#                    --logcolumn energy_densityc2 --logcolumn pressurec2 \
+#                    --column-label energy_densityc2 '$\varepsilon/c^2$' \
+#                    --column-label pressurec2 '$p/c^2$' \
+#                    --column-range energy_densityc2 1e13 1e16 \
+#                    --column-range pressurec2 1e10 1e16 \
+#                    -v \
+#                    -o $OUTDIR/$FTAG/samples \
+#                    -t pc2-$FTAG-draw-$I \
+#                    --grid \
+#                    $sample $reference \
+#                || exit 1
+
+#                echo \
+#                plot-eos \
+#                    energy_densityc2 cs2c2 \
+#                    --logcolumn energy_densityc2 --logcolumn cs2c2 \
+#                    --column-label energy_densityc2 '$\varepsilon/c^2$' \
+#                    --column-label cs2c2 '$c_s^2/c^2$' \
+#                    --column-range energy_densityc2 1e13 1e16 \
+#                    --column-range cs2c2 0.001 1.0 \
+#                    -v \
+#                    -o $OUTDIR/$FTAG/samples \
+#                    -t cs2c2-$FTAG-draw-$I \
+#                    --grid \
+#                    $sample $reference \
+#                || exit 1
+
+            done
+
+            #-----------------------------
+
+            ### plot synthetic EoS
+
+#            echo \
+            plot-eos \
+                energy_densityc2 pressurec2 \
+                --column-label energy_densityc2 '$\varepsilon/c^2$' \
+                --column-label pressurec2 '$p/c^2$' \
+                --column-range energy_densityc2 1e13 1e16 \
+                --column-range pressurec2 1e10 6e15 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t lin-pc2-$FTAG \
+                --grid \
+                $samples $reference $original \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                energy_densityc2 pressurec2 \
+                --logcolumn energy_densityc2 --logcolumn pressurec2 \
+                --column-label energy_densityc2 '$\varepsilon/c^2$' \
+                --column-label pressurec2 '$p/c^2$' \
+                --column-range energy_densityc2 1e13 1e16 \
+                --column-range pressurec2 1e10 1e16 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t pc2-$FTAG \
+                --grid \
+                $samples $reference $original \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                energy_densityc2 cs2c2 \
+                --logcolumn energy_densityc2 --logcolumn cs2c2 \
+                --column-label energy_densityc2 '$\varepsilon/c^2$' \
+                --column-label cs2c2 '$c_s^2/c^2$' \
+                --column-range energy_densityc2 1e13 1e16 \
+                --column-range cs2c2 0.001 1.0 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t cs2c2-$FTAG \
+                --grid \
+                $samples $reference \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                central_pressurec2 M \
+                --logcolumn central_pressurec2 \
+                --column-label central_pressurec2 '$p_c/c^2\,[\mathrm{g}/\mathrm{cm}^3]$' \
+                --column-label M '$M\,[M_\odot]$' \
+                --column-range M 0.1 3.0 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t M-central_pressurec2-$FTAG \
+                --grid \
+                $macsamples \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                central_baryon_density M \
+                --logcolumn central_baryon_density \
+                --column-label central_baryon_density '$\rho_c\,[\mathrm{g}/\mathrm{cm}^3]$' \
+                --column-label M '$M\,[M_\odot]$' \
+                --column-range M 0.1 3.0 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t M-central_baryon_density-$FTAG \
+                --grid \
+                $macsamples \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                R M \
+                --column-label R '$R\,[\mathrm{km}]$' \
+                --column-label M '$M\,[M_\odot]$' \
+                --column-range R 5.0 20 \
+                --column-range M 0.1 3.0 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t M-R-$FTAG \
+                --grid \
+                $macsamples \
+            || exit 1
+
+#            echo \
+            plot-eos \
+                M Lambda \
+                --logcolumn Lambda \
+                --column-label Lambda '$\Lambda$' \
+                --column-label M '$M\,[M_\odot]$' \
+                --column-range Lambda 1.0 1e5 \
+                --column-range M 0.1 3.0 \
+                -v \
+                -o $OUTDIR/$FTAG \
+                -t M-Lambda-$FTAG \
+                --grid \
+                $macsamples \
+            || exit 1
+
+            #---
+
+            # plot marginal distributions
+            ./csv2marginals \
+                ${OUTDIR}/${FTAG}/DRAWmod1000-*/eos-draw*csv \
+                2.8e13 2.8e15 \
+                --output-dir ${OUTDIR}/${FTAG}/ \
+                --tag $FTAG \
+                --Verbose
+
+        done
+    done
+done

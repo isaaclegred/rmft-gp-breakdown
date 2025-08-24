@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+
+"""a simple script to generate an Gaussian Process model based on a sample of EoS
+"""
+__author__ = "Reed Essick (reed.essick@gmail.com)"
+
+#-------------------------------------------------
+
+import os
+import sys
+
+import numpy as np
+import h5py
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
+from argparse import ArgumentParser
+
+### non-standard libraries
+from universality.utils import utils
+
+#-------------------------------------------------
+
+def load(csv):
+    data = np.genfromtxt(path, names=True, delimiter=',')
+
+    #---
+
+    try:
+        assert np.all(data['pressurec2'] > 0), 'at least one pressurec2 < 0\n%s' % data['pressurec2']
+    except AssertionError as e:
+        if np.all(data['pressurec2'][1:] > 0): # only the first sample sucks
+            print('skipping first sample, which has an unphysical pressure')
+            data = data[1:]
+        else:
+            print('Bad pressure properties!')
+            raise e
+
+    #---
+
+    # numerically estimate sound speed
+    cs2c2 = utils.num_dfdx(data['energy_densityc2'], data['pressurec2'])
+
+    try:
+        assert np.min(cs2c2) > 0.0, 'bad min(cs2c2)=%.6f' % np.min(cs2c2)
+        assert np.max(cs2c2) < 1.0, 'bad max(cs2c2)=%.6f' % np.max(cs2c2)
+    except AssertionError as e:
+        print('Bad sound-speed properties!')
+        raise e
+
+    #---
+
+    return data['pressurec2'], np.log(1./cs2c2 - 1.)
+
+#-------------------------------------------------
+
+parser = ArgumentParser()
+
+parser.add_argument('txt', nargs='+', type=str)
+
+parser.add_argument('--pressurec2-range', nargs=2, type=float, default=(-np.infty, +np.infty))
+
+parser.add_argument('--pressurec2-grid-range', nargs=2, type=float, default=(1e10, 1e15),
+    help='defines the range of pressures used when constructing the grid over pressure')
+parser.add_argument('--num-pressure-points', type=int, default=1000,
+    help='the number of points used when constructing the grid over pressure')
+
+#---
+
+parser.add_argument('-S', '--scale', type=float, default=1.0)
+parser.add_argument('-L', '--correlation-length', type=float, default=np.infty)
+
+#---
+
+parser.add_argument('--plot', default=False, action='store_true')
+parser.add_argument('--num-reference', default=10, type=int)
+parser.add_argument('--num-draws', default=10, type=int)
+parser.add_argument('--seed', default=None, type=int)
+
+#---
+
+parser.add_argument('-o', '--output-dir', default='.', type=str)
+parser.add_argument('-t', '--tag', default='', type=str)
+
+parser.add_argument('-v', '--verbose', default=False, action='store_true')
+parser.add_argument('-V', '--Verbose', default=False, action='store_true')
+
+args = parser.parse_args()
+
+args.verbose |= args.Verbose
+
+os.makedirs(args.output_dir, exist_ok=True)
+
+if args.tag:
+    args.tag = "_" + args.tag
+
+#-------------------------------------------------
+
+if args.seed is not None:
+    if args.verbose:
+        print('setting seed=%d'%args.seed)
+    np.random.seed(args.seed)
+
+#-------------------------------------------------
+
+# construct pressure grid
+if args.verbose:
+    print('constructing grid in log(pressurec2) between (%.3e, %.3e) with %d points' % \
+        (tuple(args.pressurec2_grid_range) + (args.num_pressure_points,)))
+logpc2 = np.linspace(*np.log(args.pressurec2_grid_range), args.num_pressure_points)
+
+# downsample pressures to make sure they stay within the range
+keep = (args.pressurec2_range[0] <= np.exp(logpc2)) * (np.exp(logpc2) <= args.pressurec2_range[1])
+if args.verbose:
+    print('retained %d points between (%.6e, %.6e)' % ((np.sum(keep),)+tuple(args.pressurec2_range)))
+logpc2 = logpc2[keep]
+
+num_pressure_points = len(logpc2)
+
+#-------------------------------------------------
+
+# write to disk
+hdf = os.path.join(args.output_dir, '%s%s.hdf' % (os.path.basename(__file__), args.tag))
+if args.verbose:
+    print('writing GPs to: '+hdf)
+
+with h5py.File(hdf, 'w') as obj:
+
+    # for each component, iterate over CSVs and compute moments
+
+    for tnd, txt in enumerate(args.txt):
+        if args.verbose:
+            print('    processing subset %d : %s' % (tnd, txt))
+
+        csv = [_.strip() for _ in open(txt, 'r').readlines()]
+        num_csv = len(csv)
+
+        if num_csv == 0:
+            if args.verbose:
+                print('        no EoS found! skipping this subset')
+            continue
+
+        if args.verbose:
+            print('        iterating over %d EoS and computing moments' % num_csv)
+
+        #---
+
+        m1 = np.zeros(num_pressure_points, dtype=float)
+        m2 = np.zeros((num_pressure_points, num_pressure_points), dtype=float)
+
+        num = 0
+        min_max_pc2 = +np.infty
+
+        for ind, path in enumerate(csv):
+            if args.Verbose:
+                sys.stdout.write('\r        %6d/%6d : %s' % (ind, num_csv, path))
+                sys.stdout.flush()
+
+            try:
+                pc2, phi = load(path)
+
+            except AssertionError:
+                if args.Verbose:
+                    sys.stdout.write('\n            Bad sound speed or pressure properties! skipping this sample\n')
+                    sys.stdout.flush()
+                continue
+
+            min_max_pc2 = min(min_max_pc2, np.max(pc2))
+            phi = np.interp(logpc2, np.log(pc2), phi)
+
+            # add to moments
+            m1 += phi
+            m2 += np.outer(phi, phi)
+
+            num += 1
+
+        if args.Verbose:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+
+        if args.verbose:
+            print('        retained data from %d / %d samples (retained fraction : %.6f)' % (num, num_csv, num/num_csv))
+
+        # drop the data at pressures where we do not have data from all samples
+        num_kept = np.arange(num_pressure_points)[logpc2 <= np.log(min_max_pc2)][-1] + 1
+        if args.verbose:
+            print('        minimum "max(pc2)" observed = %.6e; retaining %d/%d samples' % \
+                (min_max_pc2, num_kept, num_pressure_points))
+
+        _logpc2 = logpc2[:num_kept]
+        m1 = m1[:num_kept]
+        m2 = m2[:num_kept,:num_kept]
+
+        # normalize moments
+        m1 /= num
+        m2 /= num
+
+        # convert 2nd moment to covariance
+        m2 = m2 - np.outer(m1, m1)
+
+        #--------------------
+
+        # hit empirical covariance with an additional squared exponential kernel
+        if args.verbose:
+            print('''\
+        applying additional squared-exponential kernel with
+            sigma = %.3e
+            length = %.3e''' % \
+                (args.scale, args.correlation_length))
+
+            p1, p2 = np.meshgrid(_logpc2, _logpc2, indexing='ij')
+            m2 *= args.scale**2 * np.exp(- 0.5 * (p1-p2)**2 / args.correlation_length**2)
+
+        #--------------------
+
+        # record the results
+        gname = 'subset-%0d-RMF%s' % (tnd, args.tag)
+        if args.verbose:
+            print('        creating group : '+gname)
+
+        group = obj.create_group(gname)
+
+        # these are actually meaningful
+        group.attrs.create('scale', args.scale)
+        group.attrs.create('correlation_length', args.correlation_length)
+
+        # set dummy attributes to make this play nicely with old code...
+
+        group.attrs.create('weight', 1.0*num) ### weight based on the number of samples included
+
+        group.attrs.create('poly_degree', np.nan)
+        group.attrs.create('sigma', np.nan)
+        group.attrs.create('length_scale', np.nan)
+        group.attrs.create('sigma_obs', np.nan)
+        group.attrs.create('model_multiplier', np.nan)
+
+        group.attrs.create('xlabel', 'log(pressurec2)')
+        group.attrs.create('flabel', 'phi')
+
+        # create dataset for mean function
+        data = np.empty(num_kept, dtype=[('log(pressurec2)', float), ('phi', float)])
+        data['log(pressurec2)'] = _logpc2
+        data['phi'] = m1
+
+        group.create_dataset('mean', data=data)
+
+        # create dataset for covariance
+        group.create_dataset('cov', data=m2)
+
+        #----------------
+
+        if args.plot:
+            num_input = min(args.num_reference, num)
+
+            if args.verbose:
+                print('        plotting process alongside %d/%d input EoS and %d realizations' % \
+                    (num_input, num, args.num_draws))
+
+            fig = plt.figure()
+            ax = fig.gca()
+
+            #---
+
+            # plot the mean and marginal stdv
+            std = np.diag(m2)**0.5
+            ax.plot(_logpc2, m1, color='k') # mean function
+            for scale in [1, 2, 3]:
+                ax.fill_between(_logpc2, m1-scale*std, m1+scale*std, alpha=0.25, color='k')
+
+            #---
+
+            # generate draws and plot them
+            zeros = np.zeros_like(_logpc2)
+            scales = np.diag(m2)**0.5
+            cov = m2/np.outer(scales, scales)
+
+            for dnd in range(args.num_draws):
+                phi = m1 + np.random.multivariate_normal(zeros, cov) * scales
+                ax.plot(_logpc2, phi, alpha=0.25, color='b')
+
+            #---
+
+            # plot input EoS
+            for path in csv[:num_input]: # assume these are randomly ordered
+                pc2, phi = load(path)
+                ax.plot(np.log(pc2), phi, color='r', alpha=0.25)
+
+            #---
+
+            # decorate
+            ax.set_xlabel('log(pressurec2)')
+            ax.set_ylabel('phi')
+
+            ax.set_xlim(xmin=_logpc2[0], xmax=_logpc2[-1])
+
+            # save
+            figname = os.path.join(args.output_dir, os.path.basename(__file__)+'%s.png'%gname)
+            if args.verbose:
+                print('            saving: '+figname)
+            fig.savefig(figname)
+            plt.close(fig)

@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+
+"""a simple script to split samples into different sets
+"""
+__author__ = "Reed Essick (reed.essick@gmail.com)"
+
+#-------------------------------------------------
+
+import os
+import sys
+
+import numpy as np
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
+from argparse import ArgumentParser
+
+### non-standard libraries
+from universality.utils import utils
+
+import emcee
+import corner
+
+#-------------------------------------------------
+
+def load(csv):
+    data = np.genfromtxt(path, names=True, delimiter=',')
+    # numerically estimate sound speed
+    cs2c2 = utils.num_dfdx(data['energy_densityc2'], data['pressurec2'])
+
+    assert np.min(cs2c2) > 0.0, 'bad min(cs2c2)=%.6f' % np.min(cs2c2)
+    assert np.max(cs2c2) < 1.0, 'bad max(cs2c2)=%.6f' % np.max(cs2c2)
+
+    return data['baryon_density'], data['pressurec2']
+
+#-------------------------------------------------
+
+parser = ArgumentParser()
+
+#---
+
+parser.add_argument('csv', nargs='+', type=str)
+
+parser.add_argument('-r', '--reference-baryon-density', type=float, required=True)
+
+parser.add_argument('--edges', nargs='+', type=float)
+
+#---
+
+parser.add_argument('-o', '--output-dir', default='.', type=str)
+parser.add_argument('-t', '--tag', default='', type=str)
+
+parser.add_argument('-v', '--verbose', default=False, action='store_true')
+parser.add_argument('-V', '--Verbose', default=False, action='store_true')
+
+#---
+
+parser.add_argument('-p', '--plot', default=False, action='store_true')
+
+#---
+
+args = parser.parse_args()
+
+args.verbose |= args.Verbose
+
+os.makedirs(args.output_dir, exist_ok=True)
+
+if args.tag:
+    args.tag = "_" + args.tag
+
+num_csv = len(args.csv)
+
+#-------------------------------------------------
+
+# iterate over CSVs and group based on the pressures at a reference density
+
+data = []
+
+if args.verbose:
+    print('loading pressurec2 at baryon_density=%.9e' % args.reference_baryon_density)
+
+for ind, path in enumerate(args.csv):
+    if args.Verbose:
+        sys.stdout.write('\r    %6d/%6d : %s' % (ind, num_csv, path))
+        sys.stdout.flush()
+
+    try:
+        rho, pc2 = load(path)
+    except AssertionError:
+        if args.Verbose:
+            sys.stdout.write('\n        Bad sound speed properties! skipping this sample\n')
+            sys.stdout.flush()
+        continue
+
+    data.append((path, np.interp(args.reference_baryon_density, rho, pc2)))
+
+if args.Verbose:
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+
+num = len(data)
+
+if args.verbose:
+    print('retained data from %d / %d samples (retained fraction : %.6f)' % (num, num_csv, num/num_csv))
+
+#------------------------
+
+# split data based on edges
+if args.verbose:
+    print('splitting data into separate groups')
+
+subsets = [[] for _ in range(len(args.edges)+1)]
+
+for path, pc2 in data:
+    for ind, edge in enumerate(args.edges):
+        if pc2 < edge:
+            subsets[ind].append((path, pc2))
+            break
+    else:
+        subsets[-1].append((path, pc2))
+
+#------------------------
+
+if args.verbose:
+    print('writing subsets to disk')
+
+for snd, subset in enumerate(subsets):
+    path = os.path.join(args.output_dir, os.path.basename(__file__) + "%s-%02d.txt" % (args.tag, snd))
+    if args.verbose:
+        print('    writing %d samples to: %s' % (len(subset), path))
+
+    np.savetxt(path, [p for p, _ in subset], fmt='%s')
+
+#------------------------
+
+# make a histogram of pressures to figure out how to split up sets
+
+if args.plot:
+    if args.verbose:
+        print('plotting distribution')
+
+    fig = plt.figure(figsize=(4,6))
+    ax = plt.subplot(2,1,2)
+    AX = plt.subplot(2,1,1)
+
+    num_bins = max(50, int(0.5*num**0.5))
+
+    _, bins, _ = ax.hist(
+        [pc2 for _, pc2 in data],
+        bins=num_bins,
+        histtype='stepfilled',
+        color='grey',
+        alpha=0.50,
+        log=True,
+    )
+
+    AX.hist(
+        [pc2 for _, pc2 in data],
+        bins=num_bins,
+        histtype='stepfilled',
+        color='grey',
+        alpha=0.50,
+        log=False,
+    )
+
+    x = np.linspace(bins[0]/1.1, bins[-1]*1.1, 1001)
+    dbins = bins[1]-bins[0]
+
+    for subset in subsets:
+        datum = [pc2 for _, pc2 in subset]
+
+        m = np.mean(datum)
+        s = np.std(datum)
+        count = np.exp(-0.5*(x-m)**2/s**2) / (2*np.pi*s**2)**0.5 * len(subset)*dbins
+        truth = count > 1.0
+
+        color = ax.plot(x[truth], count[truth])[0].get_color()
+        AX.plot(x[truth], count[truth], color=color)
+
+        ax.hist(
+            datum,
+            bins=bins,
+            histtype='step',
+            alpha=0.50,
+            color=color,
+            log=True,
+        )
+
+        AX.hist(
+            datum,
+            bins=bins,
+            histtype='step',
+            alpha=0.50,
+            color=color,
+            log=False,
+        )
+
+    # decorate
+    ax.set_xlim(xmin=bins[0]/1.1, xmax=bins[-1]*1.1)
+    ax.set_xlabel('pressurec2(baryon_density=%.3e)' % args.reference_baryon_density)
+
+    AX.set_xlim(ax.get_xlim())
+    plt.setp(AX.get_xticklabels(), visible=False)
+
+    for a in fig.axes:
+        a.tick_params(
+            left=True,
+            right=True,
+            top=True,
+            bottom=True,
+            direction='in',
+            which='both',
+        )
+
+        a.grid(True, which='both')
+
+    plt.subplots_adjust(
+        left=0.10,
+        right=0.95,
+        top=0.95,
+        bottom=0.10,
+        hspace=0.03,
+    )
+
+    # save
+    figname = os.path.join(args.output_dir, os.path.basename(__file__) + args.tag + ".png")
+    if args.verbose:
+        print('    saving: '+figname)
+    fig.savefig(figname)
+    plt.close(fig)

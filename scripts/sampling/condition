@@ -1,0 +1,89 @@
+#!/bin/bash
+
+### a quick script to record workflow
+### Reed Essick (reed.essick@gmail.com)
+
+#-------------------------------------------------
+
+. config.sh
+
+#-------------------------------------------------
+
+# build simple GP models based on the uncertainty envelopes
+
+#-------------------------------------------------
+
+for RMF in $RMFS
+do
+
+    OUTDIR="$BASEDIR/$RMF"
+
+    # construct GPs from sample set based on pressures at just below 4*saturation
+
+#    echo \
+    ./csv2sets \
+        $(ls ../RMFEoS/unpacked-${RMF}/eos-draw*csv) \
+        --reference-baryon-density "2.8e15" \
+        --edges "1.05e15" "2.00e15" \
+        --plot \
+        --output-dir $RMF \
+        --tag $RMF \
+        --Verbose \
+    || exit 1
+
+    # condition these up to different maximum pressures
+
+    for MAXPC2 in $MAXPC2S
+    do
+
+        TAG="${RMF}_maxpc2-$MAXPC2"
+
+        #-------------------------------------
+
+        # construct external process
+
+#        echo \
+        ./csv2gp \
+            $(ls ${RMF}/csv2sets_${RMF}-*.txt) \
+            --pressurec2-range "1e10" "$MAXPC2" \
+            --pressurec2-grid-range $MIN_GRID_PC2 $MAX_GRID_PC2 \
+            --num-pressure-points $NUM_GRID_PC2 \
+            --plot \
+            --num-reference 25 \
+            --num-draws 50 \
+            --Verbose \
+            --output-dir $OUTDIR \
+            --tag ${TAG} \
+        || exit 1
+
+        EXTPROC="${OUTDIR}/csv2gp_${TAG}.hdf"
+
+        #---------------------------------
+
+        # iterate over compositions, fixing marginal for each
+
+        for COMP in $COMPS
+        do
+
+            ORGPROC="${COMPDIR}/${COMP}/gpr_gpr_${COMP}.hdf5"
+
+            # fix the marginal distribution within EFT range
+
+            FTAG="${TAG}_${COMP}_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+
+#            echo \
+            gpr-fix-marginal \
+                $ORGPROC \
+                $EXTPROC \
+                --smoothing-length-scale $SMOOTHING_LENGTH \
+                --smoothing-sigma-noise $SMOOTHING_SIGMA \
+                --plot \
+                --grid \
+                --output-dir $OUTDIR/$FTAG \
+                --tag $FTAG \
+                --Verbose \
+            || exit 1
+
+        done
+    done
+done

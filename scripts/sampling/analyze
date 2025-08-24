@@ -1,0 +1,102 @@
+#!/bin/bash
+
+### a quick script to record workflow
+### Reed Essick (reed.essick@gmail.com)
+
+#-------------------------------------------------
+
+. config.sh
+
+#-------------------------------------------------
+
+# draw samples from conditioned GPs
+
+#-------------------------------------------------
+
+for RMF in $RMFS
+do
+
+    OUTDIR="$BASEDIR/$RMF"
+
+    for MAXPC2 in $MAXPC2S
+    do
+
+        TAG="${RMF}_maxpc2-$MAXPC2"
+
+        for COMP in $COMPS
+        do
+
+            FTAG="${TAG}_${COMP}_${SMOOTHING_LENGTH_NAME}_${SMOOTHING_SIGMA_NAME}"
+            MANIFEST="${OUTDIR}/$FTAG/manifest-${FTAG}.csv"
+
+#            echo \
+            process2branch-properties \
+                $MANIFEST \
+                --eos-column $EOS_COLUMN \
+                --eos-dir ${OUTDIR}/${FTAG} \
+                --eos-num-per-dir "1000" \
+                --eos-basename "eos-draw-%(draw)06d.csv" \
+                --macro-basename "macro-draw-%(draw)06d.csv" \
+                --macro2eos-central-baryon-density "central_pressurec2" "pressurec2" \
+                --mass-column "M" \
+                --output-eos-column "baryon_density" \
+                --output-eos-column "pressurec2" \
+                --output-eos-column "energy_densityc2" \
+                --output-eos-column "cs2c2" \
+                --output-macro-column "M" \
+                --output-macro-column "R" \
+                --output-macro-column "Lambda" \
+                --output-macro-column "I" \
+                --output-macro-column "Mb" \
+                --Verbose \
+            || exit 1
+
+            for YCOLUMN in "R" "Lambda"
+            do
+
+                QUANTILES="${OUTDIR}/${FTAG}/manifest-M-${YCOLUMN}-quantiles-${FTAG}.csv"
+
+#                echo \
+                process2quantiles \
+                    $MANIFEST $QUANTILES \
+                    "M" $YCOLUMN "0.05" "3.0" \
+                    --default-y-value 0.0 \
+                    --eos-column $EOS_COLUMN \
+                    --eos-dir ${OUTDIR}/${FTAG} \
+                    --eos-num-per-dir "1000" \
+                    --eos-basename "macro-draw-%(draw)06d.csv" \
+                    --branches-basename "macro-draw-%(draw)06d-branches.csv" "central_pressurec2" "start_central_pressurec2" "end_central_pressurec2" \
+                    --branches-dir ${OUTDIR}/${FTAG} \
+                    --selection-rule "random" \
+                    --num-points 1001 \
+                    --Verbose \
+                || exit 1
+
+            done
+
+            for XCOLUMN in "baryon_density" "energy_densityc2"
+            do
+
+                for YCOLUMN in "pressurec2" "cs2c2"
+                do
+
+                    QUANTILES="${OUTDIR}/${FTAG}/manifest-${XCOLUMN}-${YCOLUMN}-quantiles-${FTAG}.csv"
+
+#                    echo \
+                    process2quantiles \
+                        $MANIFEST $QUANTILES \
+                        $XCOLUMN $YCOLUMN "2.8e12" "2.8e16" \
+                        --eos-column $EOS_COLUMN \
+                        --eos-dir ${OUTDIR}/${FTAG} \
+                        --eos-num-per-dir "1000" \
+                        --eos-basename "eos-draw-%(draw)06d.csv" \
+                        --num-points 1001 \
+                        --Verbose \
+                    || exit 1
+
+                done
+            done
+
+        done
+    done
+done

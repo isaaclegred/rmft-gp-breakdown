@@ -1,0 +1,3 @@
+This repository contains scripts which reproduce the results of <insert DOI here>, as well as links to a Zenodo repository <insert Zenodo link here> which holds EoS samples produced for the inference weighted by astrophysical observations.
+
+For Equation of State samples, as well as weights which correspond to astrophysical observations, see the Zenodo Repository.  To perform an analogous simulation inference, see the `scripts`.

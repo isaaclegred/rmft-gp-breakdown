@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+
+"""a simple script to plot marginal distributions of the pressure at several baryon densities
+"""
+__author__ = "Reed Essick (reed.essick@gmail.com)"
+
+#-------------------------------------------------
+
+import os
+import sys
+
+import numpy as np
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
+from argparse import ArgumentParser
+
+### non-standard libraries
+from universality.utils import utils
+
+#-------------------------------------------------
+
+def load(csv):
+    data = np.genfromtxt(path, names=True, delimiter=',')
+    # numerically estimate sound speed
+    cs2c2 = utils.num_dfdx(data['energy_densityc2'], data['pressurec2'])
+
+    assert np.min(cs2c2) > 0.0, 'bad min(cs2c2)=%.6f' % np.min(cs2c2)
+    assert np.max(cs2c2) < 1.0, 'bad max(cs2c2)=%.6f' % np.max(cs2c2)
+
+    return data['baryon_density'], data['pressurec2']
+
+#-------------------------------------------------
+
+parser = ArgumentParser()
+
+#---
+
+parser.add_argument('csv', nargs='+', type=str)
+
+parser.add_argument('baryon_density_range', nargs=2, type=float)
+parser.add_argument('--dbaryon-density', default=2.8e13, type=float) # default is 0.1*saturation
+
+#---
+
+parser.add_argument('-o', '--output-dir', default='.', type=str)
+parser.add_argument('-t', '--tag', default='', type=str)
+
+parser.add_argument('-v', '--verbose', default=False, action='store_true')
+parser.add_argument('-V', '--Verbose', default=False, action='store_true')
+
+#---
+
+#---
+
+args = parser.parse_args()
+
+args.verbose |= args.Verbose
+
+os.makedirs(args.output_dir, exist_ok=True)
+
+if args.tag:
+    args.tag = "_" + args.tag
+
+num_csv = len(args.csv)
+
+#-------------------------------------------------
+
+if args.verbose:
+    print('setting up reference baryon densities between (%.3e, %.3e) with spacing %.3e' % \
+        (args.baryon_density_range[0], args.baryon_density_range[1], args.dbaryon_density))
+baryon_density = np.arange(args.baryon_density_range[0], args.baryon_density_range[1]+args.dbaryon_density, args.dbaryon_density)
+num_baryon_density = len(baryon_density)
+
+if args.verbose:
+    print('    computing %d marginal distributions' % num_baryon_density)
+
+#-------------------------------------------------
+
+# iterate over CSVs and group based on the pressures at a reference density
+
+data = []
+
+if args.verbose:
+    print('loading pressurec2 at %d baryon densities' % num_baryon_density)
+
+for ind, path in enumerate(args.csv):
+    if args.Verbose:
+        sys.stdout.write('\r    %6d/%6d : %s' % (ind, num_csv, path))
+        sys.stdout.flush()
+
+    try:
+        rho, pc2 = load(path)
+    except AssertionError:
+        if args.Verbose:
+            sys.stdout.write('\n        Bad sound speed properties! skipping this sample\n')
+            sys.stdout.flush()
+        continue
+
+    data.append(np.interp(baryon_density, rho, pc2))
+
+if args.Verbose:
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+
+data = np.array(data, dtype=float)
+num = len(data)
+
+if args.verbose:
+    print('retained data from %d / %d samples (retained fraction : %.6f)' % (num, num_csv, num/num_csv))
+
+#------------------------
+
+num_bins = max(50, int(0.5*num**0.5))
+for rnd, rho in enumerate(baryon_density):
+
+    if args.verbose:
+        print('plotting pressurec2 distribution at baryon_density=%.3e' % rho)
+
+    fig = plt.figure(figsize=(4,6))
+    ax = plt.subplot(2,1,2)
+    AX = plt.subplot(2,1,1)
+
+    ax.hist(data[:,rnd], bins=num_bins, histtype='step', log=True)
+    AX.hist(data[:,rnd], bins=num_bins, histtype='step', log=False)
+
+    # decorate
+    AX.set_title('baryon_density = %.3e' % rho)
+    plt.setp(AX.get_xticklabels(), visible=False)
+
+    ax.set_xlabel('pressurec2(baryon_density=%.3e)' % rho)
+
+    AX.set_ylim(ymin=0.0)
+    ax.set_ylim(ymin=0.1, ymax=num)
+
+    for a in fig.axes:
+        a.tick_params(
+            left=True,
+            right=True,
+            top=True,
+            bottom=True,
+            direction='in',
+            which='both',
+        )
+
+        a.grid(True, which='both')
+
+    plt.subplots_adjust(
+        left=0.10,
+        right=0.95,
+        top=0.95,
+        bottom=0.10,
+        hspace=0.03,
+    )
+
+    # save
+    figname = os.path.join(args.output_dir, os.path.basename(__file__) + "%s-%03d.png" % (args.tag, rnd))
+    if args.verbose:
+        print('    saving: '+figname)
+    fig.savefig(figname)
+    plt.close(fig)
