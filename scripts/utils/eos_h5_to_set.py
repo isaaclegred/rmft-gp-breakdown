@@ -35,16 +35,15 @@ def csvs_to_h5( indices, output_file, eos_pattern=lambda x : f"eos_{x}.csv", mac
             eos_df = pd.read_csv(eos_file)
             macro_df = pd.read_csv(macro_file)
             if weights is not None:
-                weights_group.create_dataset(str(idx), data=weights[idx])
+                weights_group.create_dataset(f"{idx:05d}", data=weights[idx])
 
             # Convert to numpy arrays for HDF5 storage
-            eos_data = eos_df.to_numpy()
-            macro_data = macro_df.to_numpy()
-
+            eos_data = eos_df.to_records()
+            macro_data = macro_df.to_records()
             # Store in HDF5 with the index as the key
-            eos_group.create_dataset(str(idx), data=eos_data)
-            macro_group.create_dataset(str(idx), data=macro_data)
-
+            eos_group.create_dataset(f"{idx:05d}", data=eos_data, dtype=eos_data.dtype)
+            
+            macro_group.create_dataset(f"{idx:05d}", data=macro_data, dtype=macro_data.dtype )
             # # Optional: store column headers as attributes
             # eos_group[str(idx)].attrs["columns"] = list(eos_df.columns)
             # macro_group[str(idx)].attrs["columns"] = list(macro_df.columns)
